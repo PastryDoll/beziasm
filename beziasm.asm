@@ -51,10 +51,7 @@ _start:
 
     ; Vars resets -----------------------------------------------------
     
-    mov byte [current_anchor], 4
-    
     ; ----------------------------------------------------------------
-
 
 
     ; Get mouse inputs/position --------------------------------------
@@ -79,6 +76,24 @@ _start:
     ; ---------------------------------------------------------------------
 
     ; Select an Anchor ----------------------------------------------------
+
+    ; If left button is down AND we already have a valid anchor selected, keep it
+    mov edi, 0   ; Left Button 
+    call IsMouseButtonDown
+    test al, al
+    jz .do_selection  ; Button not pressed, proceed with selection
+
+    ; check if we have a valid anchor
+    movzx eax, byte [current_anchor] 
+    cmp eax, 3
+    jl .anchor_selection_done 
+
+    ; -------------------------------
+    
+   .do_selection:
+
+    mov byte [current_anchor], 4
+
     movq xmm0, [mouse_position]
     movq xmm1, [anchors + 0]
     movq xmm2, [anchors + 8]
@@ -111,7 +126,7 @@ _start:
 
     ; Act on Selected Anchor ----------------------------------------------
 
-    ; Move
+    ; Move ----
     movzx eax, byte [current_anchor] 
     cmp eax, 4
     jge .dont_move
@@ -119,10 +134,14 @@ _start:
     mov edi, 0   ; Left Button
     call IsMouseButtonDown
     test al, al
-    jz .dont Move
+    jz .dont_move
 
-    #TODO 
+    movzx rax, byte [current_anchor] ; commpute offset
+    imul rax, 16
+    movq xmm0, [mouse_position]
+    movq [anchors + rax], xmm0 
 
+    ; --------
 
     .dont_move: 
 
