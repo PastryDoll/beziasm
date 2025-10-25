@@ -52,12 +52,20 @@ _start:
     ; Vars resets -----------------------------------------------------
     
     ; ----------------------------------------------------------------
-
-
+    
     ; Get mouse inputs/position --------------------------------------
     call GetMousePosition
     movq [mouse_position], xmm0   
-    mov edi, 0  
+
+    ; Compute Mouse position on the center of anchor
+    movq xmm1, xmm0                  
+    mov eax, dword [anchor_size]     
+    sub eax, 0x00800000              ; Subtract 1 from exponent (÷2)
+    movd xmm2, eax                   
+    shufps xmm2, xmm2, 0             
+    subps xmm1, xmm2                 
+    movq [mouse_position_offseted], xmm1
+
     ; ----------------------------------------------------------------
 
     ; Draw Anchors ---------------------------------------------------
@@ -94,7 +102,7 @@ _start:
 
     mov byte [current_anchor], 4
 
-    movq xmm0, [mouse_position]
+    movq xmm0, [mouse_position_offseted]
     movq xmm1, [anchors + 0]
     movq xmm2, [anchors + 8]
     call CheckCollisionPointRec
@@ -104,7 +112,7 @@ _start:
     jmp .anchor_selection_done 
 
     .check_anchor1:
-    movq xmm0, [mouse_position]
+    movq xmm0, [mouse_position_offseted]
     movq xmm1, [anchors + 16]
     movq xmm2, [anchors + 24]
     call CheckCollisionPointRec
@@ -114,7 +122,7 @@ _start:
     jmp .anchor_selection_done 
 
     .check_anchor2:
-    movq xmm0, [mouse_position]
+    movq xmm0, [mouse_position_offseted]
     movq xmm1, [anchors + 32]
     movq xmm2, [anchors + 40]
     call CheckCollisionPointRec
@@ -138,7 +146,7 @@ _start:
 
     movzx rax, byte [current_anchor] ; commpute offset
     imul rax, 16
-    movq xmm0, [mouse_position]
+    movq xmm0, [mouse_position_offseted]
     movq [anchors + rax], xmm0 
 
     ; --------
@@ -160,7 +168,7 @@ _start:
     imul rax, 16
 
     ; Copy x,y
-    movq xmm0, [mouse_position]
+    movq xmm0, [mouse_position_offseted]
     movq [anchors + rax], xmm0
 
     ; Copy w,h
@@ -202,6 +210,10 @@ mouse_position:
     dd 0.0
     dd 0.0
 
+mouse_position_offseted:
+    dd 0.0
+    dd 0.0
+
 anchors:
     ; Anchor 0
     dd 0.0      ; x
@@ -228,7 +240,8 @@ toadddmsg db "Anchor to add %i.", 0xA,0
 currmsg db "Anchor selected %i.", 0xA,0    
 debugmsg: db "Anchor stored: x=%d y=%d w=%d h=%d", 0xA, 0
 collchkmsg: db "Checking: mouse(%d,%d) vs rect(%d,%d,%d,%d)", 0xA, 0
-
+mouse_pos_msg: db "Mouse: x=%d y=%d", 0xA, 0
+mouse_offset_msg: db "Mouse Offseted: x=%d y=%d", 0xA, 0
 
 
 
