@@ -24,6 +24,7 @@ section '.text' executable
     extrn IsMouseButtonPressed
     extrn IsMouseButtonDown
     extrn CheckCollisionPointRec
+    extrn DrawRectangleLinesEx
     extrn _exit
 
 _start:
@@ -52,7 +53,7 @@ _start:
     ; Vars resets -----------------------------------------------------
     
     ; ----------------------------------------------------------------
-    
+
     ; Get mouse inputs/position --------------------------------------
     call GetMousePosition
     movq [mouse_position], xmm0   
@@ -102,7 +103,7 @@ _start:
 
     mov byte [current_anchor], 4
 
-    movq xmm0, [mouse_position_offseted]
+    movq xmm0, [mouse_position]
     movq xmm1, [anchors + 0]
     movq xmm2, [anchors + 8]
     call CheckCollisionPointRec
@@ -112,7 +113,7 @@ _start:
     jmp .anchor_selection_done 
 
     .check_anchor1:
-    movq xmm0, [mouse_position_offseted]
+    movq xmm0, [mouse_position]
     movq xmm1, [anchors + 16]
     movq xmm2, [anchors + 24]
     call CheckCollisionPointRec
@@ -122,7 +123,7 @@ _start:
     jmp .anchor_selection_done 
 
     .check_anchor2:
-    movq xmm0, [mouse_position_offseted]
+    movq xmm0, [mouse_position]
     movq xmm1, [anchors + 32]
     movq xmm2, [anchors + 40]
     call CheckCollisionPointRec
@@ -131,6 +132,27 @@ _start:
     mov byte [current_anchor], 2    
 
     .anchor_selection_done:
+
+    ; Draw Contour of selected Anchor
+    movzx eax, byte [current_anchor]
+    cmp eax, 3                     
+    jge .skip_outline             
+
+    ; Compute offset for selected anchor
+    movzx rax, byte [current_anchor]
+    imul rax, 16
+
+    movq xmm0, [anchors + rax]      
+    movq xmm1, [anchors + rax + 8]  
+    
+    mov eax, 0x40400000 ; Thicckness             
+    movd xmm2, eax 
+    
+    mov rdi, 0xFFFFFF00  ; Color
+    
+    call DrawRectangleLinesEx
+
+    .skip_outline:
 
     ; Act on Selected Anchor ----------------------------------------------
 
