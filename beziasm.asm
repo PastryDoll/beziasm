@@ -65,7 +65,7 @@ _start:
     movd xmm2, eax                   
     shufps xmm2, xmm2, 0             
     subps xmm1, xmm2                 
-    movq [mouse_position_offseted], xmm1
+    movq [mouse_position_on_center], xmm1
 
     ; ----------------------------------------------------------------
 
@@ -101,7 +101,8 @@ _start:
     
    .do_selection:
 
-    mov byte [current_anchor], 4
+    mov byte [current_anchor], 4 ; reset selected anchor to
+    mov byte [is_dragging], 0 ; reset is dragging 
 
     movq xmm0, [mouse_position]
     movq xmm1, [anchors + 0]
@@ -141,7 +142,9 @@ _start:
     ; Compute offset for selected anchor
     movzx rax, byte [current_anchor]
     imul rax, 16
+    mov [current_anchor_byte_offset], rax
 
+    mov rax, [current_anchor_byte_offset]
     movq xmm0, [anchors + rax]      
     movq xmm1, [anchors + rax + 8]  
     
@@ -166,16 +169,42 @@ _start:
     test al, al
     jz .dont_move
 
-    movzx rax, byte [current_anchor] ; commpute offset
-    imul rax, 16
-    movq xmm0, [mouse_position_offseted]
+    ; Check if this is the first frame of dragging
+    cmp byte [is_dragging], 0
+    jne .continue_drag
+
+    ; First frame - save initial positions
+    mov byte [is_dragging], 1
+
+    ; Save initial mouse position
+    movq xmm0, [mouse_position]
+    movq [drag_start_mouse], xmm0
+
+    ; Save initial anchor position
+    mov rax, [current_anchor_byte_offset]
+    movq xmm0, [anchors + rax]
+    movq [drag_start_anchor], xmm0
+
+    .continue_drag:
+
+    ; Calculate delta = current_mouse - drag_start_mouse
+    movq xmm0, [mouse_position]
+    movq xmm1, [drag_start_mouse]
+    subps xmm0, xmm1                    ; xmm0 = delta
+
+    ; New position = drag_start_anchor + delta
+    movq xmm1, [drag_start_anchor]
+    addps xmm0, xmm1                    ; xmm0 = new position
+
+    ; Store new position
+    mov rax, [current_anchor_byte_offset]
     movq [anchors + rax], xmm0 
 
     ; --------
 
-    .dont_move: 
+    .dont_move:
 
-    ; Set Next Anchor -----------------------------------------------------
+    ; Add Next Anchor -----------------------------------------------------
     movzx eax, byte [anchor_to_add] 
     cmp eax, 3   ; All have been created  
     jge .end_loop
@@ -185,12 +214,12 @@ _start:
     test al, al
     jz .end_loop
 
-    ; Compute offset for anchor to set
+    ; Compute offset for anchor to add
     movzx rax, byte [anchor_to_add]
     imul rax, 16
 
     ; Copy x,y
-    movq xmm0, [mouse_position_offseted]
+    movq xmm0, [mouse_position_on_center]
     movq [anchors + rax], xmm0
 
     ; Copy w,h
@@ -228,13 +257,26 @@ section '.data' writeable
 anchor_size:
     dd 50.0
 
+current_anchor_byte_offset:
+    dq 0
+
 mouse_position:
     dd 0.0
     dd 0.0
 
-mouse_position_offseted:
+mouse_position_on_center:
     dd 0.0
     dd 0.0
+
+drag_start_mouse:
+    dd 0.0
+    dd 0.0
+
+drag_start_anchor:
+    dd 0.0
+    dd 0.0
+
+is_dragging: db 0
 
 anchors:
     ; Anchor 0
