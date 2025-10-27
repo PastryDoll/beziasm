@@ -25,6 +25,7 @@ section '.text' executable
     extrn IsMouseButtonDown
     extrn CheckCollisionPointRec
     extrn DrawRectangleLinesEx
+    extrn IsKeyPressed
     extrn _exit
 
 _start:
@@ -69,168 +70,188 @@ _start:
 
     ; ----------------------------------------------------------------
 
-    ; Draw Anchors ---------------------------------------------------
-    movq xmm0, [anchors + 0]
-    movq xmm1, [anchors + 8]
-    mov rdi, 0xFF0000FF
-    call DrawRectangleV
-    movq xmm0, [anchors + 16]
-    movq xmm1, [anchors + 24]
-    mov rdi, 0xFF0000FF
-    call DrawRectangleV
-    movq xmm0, [anchors + 32]
-    movq xmm1, [anchors + 40]
-    mov rdi, 0xFF0000FF
-    call DrawRectangleV
-    ; ---------------------------------------------------------------------
-
-    ; Select an Anchor ----------------------------------------------------
-
-    ; If left button is down AND we already have a valid anchor selected, keep it
-    mov edi, 0   ; Left Button 
-    call IsMouseButtonDown
-    test al, al
-    jz .do_selection  ; Button not pressed, proceed with selection
-
-    ; check if we have a valid anchor
-    movzx eax, byte [current_anchor] 
-    cmp eax, 3
-    jl .anchor_selection_done 
-
-    ; -------------------------------
-    
-   .do_selection:
-
-    mov byte [current_anchor], 4 ; reset selected anchor to
-    mov byte [is_dragging], 0 ; reset is dragging 
-
-    movq xmm0, [mouse_position]
-    movq xmm1, [anchors + 0]
-    movq xmm2, [anchors + 8]
-    call CheckCollisionPointRec
-    test al, al
-    jz .check_anchor1
-    mov byte [current_anchor],0
-    jmp .anchor_selection_done 
-
-    .check_anchor1:
-    movq xmm0, [mouse_position]
-    movq xmm1, [anchors + 16]
-    movq xmm2, [anchors + 24]
-    call CheckCollisionPointRec
-    test al, al
-    jz .check_anchor2
-    mov byte [current_anchor], 1    
-    jmp .anchor_selection_done 
-
-    .check_anchor2:
-    movq xmm0, [mouse_position]
-    movq xmm1, [anchors + 32]
-    movq xmm2, [anchors + 40]
-    call CheckCollisionPointRec
-    test al, al
-    jz .anchor_selection_done
-    mov byte [current_anchor], 2    
-
-    .anchor_selection_done:
-
-    ; Draw Contour of selected Anchor
-    movzx eax, byte [current_anchor]
-    cmp eax, 3                     
-    jge .skip_outline             
-
-    ; Compute offset for selected anchor
-    movzx rax, byte [current_anchor]
-    imul rax, 16
-    mov [current_anchor_byte_offset], rax
-
-    mov rax, [current_anchor_byte_offset]
-    movq xmm0, [anchors + rax]      
-    movq xmm1, [anchors + rax + 8]  
-    
-    mov eax, 0x40400000 ; Thicckness             
-    movd xmm2, eax 
-    
-    mov rdi, 0xFFFFFF00  ; Color
-    
-    call DrawRectangleLinesEx
-
-    .skip_outline:
-
-    ; Act on Selected Anchor ----------------------------------------------
-
-    ; Move ----
-    movzx eax, byte [current_anchor] 
-    cmp eax, 4
-    jge .dont_move
-
-    mov edi, 0   ; Left Button
-    call IsMouseButtonDown
-    test al, al
-    jz .dont_move
-
-    ; Check if this is the first frame of dragging
-    cmp byte [is_dragging], 0
-    jne .continue_drag
-
-    ; First frame - save initial positions
-    mov byte [is_dragging], 1
-
-    ; Save initial mouse position
-    movq xmm0, [mouse_position]
-    movq [drag_start_mouse], xmm0
-
-    ; Save initial anchor position
-    mov rax, [current_anchor_byte_offset]
-    movq xmm0, [anchors + rax]
-    movq [drag_start_anchor], xmm0
-
-    .continue_drag:
-
-    ; Calculate delta = current_mouse - drag_start_mouse
-    movq xmm0, [mouse_position]
-    movq xmm1, [drag_start_mouse]
-    subps xmm0, xmm1                    ; xmm0 = delta
-
-    ; New position = drag_start_anchor + delta
-    movq xmm1, [drag_start_anchor]
-    addps xmm0, xmm1                    ; xmm0 = new position
-
-    ; Store new position
-    mov rax, [current_anchor_byte_offset]
-    movq [anchors + rax], xmm0 
-
-    ; --------
-
-    .dont_move:
-
     ; Add Next Anchor -----------------------------------------------------
-    movzx eax, byte [anchor_to_add] 
-    cmp eax, 3   ; All have been created  
-    jge .end_loop
+    .add_next_anchor:
+        movzx eax, byte [anchor_to_add] 
+        cmp eax, 3   ; All have been created  
+        jge .finish_add
 
-    mov edi, 0   ; Left Button
-    call IsMouseButtonPressed          
-    test al, al
-    jz .end_loop
+        mov edi, 0   ; Left Button
+        call IsMouseButtonPressed          
+        test al, al
+        jz .finish_add
 
-    ; Compute offset for anchor to add
-    movzx rax, byte [anchor_to_add]
-    imul rax, 16
+        ; Compute offset for anchor to add
+        movzx rax, byte [anchor_to_add]
+        imul rax, 16
 
-    ; Copy x,y
-    movq xmm0, [mouse_position_on_center]
-    movq [anchors + rax], xmm0
+        ; Copy x,y
+        movq xmm0, [mouse_position_on_center]
+        movq [anchors + rax], xmm0
 
-    ; Copy w,h
-    movss xmm1, [anchor_size]
-    movss [anchors + rax + 8], xmm1    
-    movss [anchors + rax + 12], xmm1
+        ; Copy w,h
+        movss xmm1, [anchor_size]
+        movss [anchors + rax + 8], xmm1    
+        movss [anchors + rax + 12], xmm1
 
-    inc byte [anchor_to_add]
+        inc byte [anchor_to_add]
+    .finish_add:
 
     ; ----------------------------------------------------------------
 
+    ; Draw Anchors ---------------------------------------------------
+    .draw_anchors:
+        movq xmm0, [anchors + 0]
+        movq xmm1, [anchors + 8]
+        mov rdi, 0xFF0000FF
+        call DrawRectangleV
+        movq xmm0, [anchors + 16]
+        movq xmm1, [anchors + 24]
+        mov rdi, 0xFF0000FF
+        call DrawRectangleV
+        movq xmm0, [anchors + 32]
+        movq xmm1, [anchors + 40]
+        mov rdi, 0xFF0000FF
+        call DrawRectangleV
+    ; ---------------------------------------------------------------------
+
+    ; Select an Anchor ----------------------------------------------------
+    .select_anchor:
+
+            ; If left button is down AND we already have a valid anchor selected, keep it
+            mov edi, 0   ; Left Button 
+            call IsMouseButtonDown
+            test al, al
+            jz .do_selection  ; Button not pressed, proceed with selection
+
+            ; check if we have a valid anchor
+            movzx eax, byte [current_anchor] 
+            cmp eax, 3
+            jl .anchor_selection_done 
+
+            ; -------------------------------
+            
+        .do_selection:
+            mov byte [current_anchor], 4 ; reset selected anchor to
+            mov byte [is_dragging], 0 ; reset is dragging 
+
+            movq xmm0, [mouse_position]
+            movq xmm1, [anchors + 0]
+            movq xmm2, [anchors + 8]
+            call CheckCollisionPointRec
+            test al, al
+            jz .check_anchor1
+            mov byte [current_anchor],0
+            jmp .anchor_selection_done 
+
+            .check_anchor1:
+            movq xmm0, [mouse_position]
+            movq xmm1, [anchors + 16]
+            movq xmm2, [anchors + 24]
+            call CheckCollisionPointRec
+            test al, al
+            jz .check_anchor2
+            mov byte [current_anchor], 1    
+            jmp .anchor_selection_done 
+
+            .check_anchor2:
+            movq xmm0, [mouse_position]
+            movq xmm1, [anchors + 32]
+            movq xmm2, [anchors + 40]
+            call CheckCollisionPointRec
+            test al, al
+            jz .anchor_selection_done
+            mov byte [current_anchor], 2    
+
+            .anchor_selection_done:
+
+            ; Draw Contour of selected Anchor
+            movzx eax, byte [current_anchor]
+            cmp eax, 3                     
+            jge .skip_outline             
+
+            ; Compute offset for selected anchor
+            movzx rax, byte [current_anchor]
+            imul rax, 16
+            mov [current_anchor_byte_offset], rax
+
+            mov rax, [current_anchor_byte_offset]
+            movq xmm0, [anchors + rax]      
+            movq xmm1, [anchors + rax + 8]  
+            
+            mov eax, 0x40400000 ; Thickness             
+            movd xmm2, eax 
+            
+            mov rdi, 0xFFFFFF00  ; Color
+            
+            call DrawRectangleLinesEx
+
+            .skip_outline:
+
+    ; Move ----
+    .move_selected_anchor:
+        movzx eax, byte [current_anchor] ; TODO - Do we need this ? 
+        cmp eax, 4
+        jge .finish_move
+
+        mov edi, 0   ; Left Button
+        call IsMouseButtonDown
+        test al, al
+        jz .finish_move
+
+        ; Check if this is the first frame of dragging
+        cmp byte [is_dragging], 0
+        jne .continue_drag
+
+        ; First frame - save initial positions
+        mov byte [is_dragging], 1
+
+        ; Save initial mouse position
+        movq xmm0, [mouse_position]
+        movq [drag_start_mouse], xmm0
+
+        ; Save initial anchor position
+        mov rax, [current_anchor_byte_offset]
+        movq xmm0, [anchors + rax]
+        movq [drag_start_anchor], xmm0
+
+        .continue_drag:
+
+        ; Calculate delta = current_mouse - drag_start_mouse
+        movq xmm0, [mouse_position]
+        movq xmm1, [drag_start_mouse]
+        subps xmm0, xmm1                    ; xmm0 = delta
+
+        ; New position = drag_start_anchor + delta
+        movq xmm1, [drag_start_anchor]
+        addps xmm0, xmm1                    ; xmm0 = new position
+
+        ; Store new position
+        mov rax, [current_anchor_byte_offset]
+        movq [anchors + rax], xmm0 
+
+        ; --------
+    .finish_move:
+
+    ; Delete -------
+    .delete_selected_anchor:
+        movzx eax, byte [current_anchor] ; TODO - Do we need this ? 
+        cmp eax, 3
+        jge .finish_delete
+
+        mov rdi, 259
+        call IsKeyPressed
+        test al, al
+        jz .finish_delete
+
+        pxor xmm0, xmm0
+        mov rax, [current_anchor_byte_offset]
+        movdqa  [anchors + rax], xmm0 
+
+        dec byte [anchor_to_add]
+    .finish_delete:
+
+    ; --------------
 
 .end_loop:
     ; Debug ----------------------------------------------------------
@@ -252,7 +273,7 @@ _start:
     xor     edi, edi         
     call _exit
 
-section '.data' writeable
+section '.data' writeable align 16
 
 anchor_size:
     dd 50.0
@@ -278,6 +299,7 @@ drag_start_anchor:
 
 is_dragging: db 0
 
+align 16  
 anchors:
     ; Anchor 0
     dd 0.0      ; x
