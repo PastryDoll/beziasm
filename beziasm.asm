@@ -26,6 +26,9 @@ section '.text' executable
     extrn CheckCollisionPointRec
     extrn DrawRectangleLinesEx
     extrn IsKeyPressed
+    extrn GetScreenWidth
+    extrn GetScreenHeight
+    extrn DrawLineV
     extrn _exit
 
 _start:
@@ -67,36 +70,6 @@ _start:
     shufps xmm2, xmm2, 0             
     subps xmm1, xmm2                 
     movq [mouse_position_on_center], xmm1
-
-    ; ----------------------------------------------------------------
-
-    ; Add Next Anchor -----------------------------------------------------
-    .add_next_anchor:
-        movzx eax, byte [anchor_to_add] 
-        cmp eax, 3   ; All have been created  
-        jge .finish_add
-
-        mov edi, 0   ; Left Button
-        call IsMouseButtonPressed          
-        test al, al
-        jz .finish_add
-
-        ; Compute offset for anchor to add
-        movzx rax, byte [anchor_to_add]
-        imul rax, 16
-
-        ; Copy x,y
-        movq xmm0, [mouse_position_on_center]
-        movq [anchors + rax], xmm0
-
-        ; Copy w,h
-        movss xmm1, [anchor_size]
-        movss [anchors + rax + 8], xmm1    
-        movss [anchors + rax + 12], xmm1
-
-        inc byte [anchor_to_add]
-    .finish_add:
-
     ; ----------------------------------------------------------------
 
     ; Draw Anchors ---------------------------------------------------
@@ -113,9 +86,36 @@ _start:
         movq xmm1, [anchors + 40]
         mov rdi, 0xFF0000FF
         call DrawRectangleV
-    ; ---------------------------------------------------------------------
+    ; ----------------------------------------------------------------
 
-    ; Select an Anchor ----------------------------------------------------
+    ; Draw Lines -----------------------------------------------------
+    .draw_lines:
+        movzx eax, byte [anchor_to_add]
+        cmp eax, 2
+        jge .draw_first_line
+        jmp .draw_first_line_done
+
+        .draw_first_line:
+            movq xmm0, [anchors]
+            movq xmm1, [anchors + 16]
+            mov rdi, 0xFF00FF00  ; Color
+            call DrawLineV
+
+        .draw_first_line_done:
+            movzx eax, byte [anchor_to_add]
+            cmp eax, 3
+            jl .dont_draw_lines              
+
+        .draw_second_line:
+            movq xmm0, [anchors+ 16]
+            movq xmm1, [anchors + 32]
+            mov rdi, 0xFF00FF00  ; Color
+            call DrawLineV
+    
+    .dont_draw_lines:
+    ;-----------------------------------------------------------------
+
+    ; Select an Anchor ----------------------------------------------- Sets [current_anchor] (default value is 3)
     .select_anchor:
 
             ; If left button is down AND we already have a valid anchor selected, keep it
@@ -132,7 +132,7 @@ _start:
             ; -------------------------------
             
         .do_selection:
-            mov byte [current_anchor], 4 ; reset selected anchor to
+            mov byte [current_anchor], 3 ; no selection = 3
             mov byte [is_dragging], 0 ; reset is dragging 
 
             movq xmm0, [mouse_position]
@@ -187,11 +187,12 @@ _start:
             call DrawRectangleLinesEx
 
             .skip_outline:
+    ; ----------------------------------------------------------------
 
-    ; Move ----
+    ; Move ----------------------------------------------------------- Move [current_anchor]
     .move_selected_anchor:
         movzx eax, byte [current_anchor] ; TODO - Do we need this ? 
-        cmp eax, 4
+        cmp eax, 3
         jge .finish_move
 
         mov edi, 0   ; Left Button
@@ -226,6 +227,36 @@ _start:
         movq xmm1, [drag_start_anchor]
         addps xmm0, xmm1                    ; xmm0 = new position
 
+        ; Clamp to screen boundaries ----------------------------
+        call GetScreenWidth
+        cvtsi2ss xmm2, eax                  
+        call GetScreenHeight
+        cvtsi2ss xmm3, eax                 
+
+        ; Subtract anchor size to get max position
+        movss xmm4, [anchor_size]
+        subss xmm2, xmm4                    ; xmm2 = max_x
+        subss xmm3, xmm4                    ; xmm3 = max_y
+
+        movaps xmm5, xmm0
+        shufps xmm5, xmm5, 0x00             ; xmm5 = [x, x, x, x]
+        movaps xmm6, xmm0
+        shufps xmm6, xmm6, 0x55             ; xmm6 = [y, y, y, y]
+
+        ; Clamp x: min(max(0, x), max_x)
+        pxor xmm7, xmm7                     ; xmm7 = 0
+        maxss xmm5, xmm7                    ; x = max(0, x)
+        minss xmm5, xmm2                    ; x = min(x, max_x)
+        
+        ; Clamp y
+        maxss xmm6, xmm7                    
+        minss xmm6, xmm3                   
+
+        movss xmm0, xmm5                    ; xmm0[0] = clamped_x
+        insertps xmm0, xmm6, 0x10           ; xmm0[1] = clamped_y
+
+        ; --------------------------------------------------------
+
         ; Store new position
         mov rax, [current_anchor_byte_offset]
         movq [anchors + rax], xmm0 
@@ -233,9 +264,42 @@ _start:
         ; --------
     .finish_move:
 
-    ; Delete -------
+    
+    ; Add Next Anchor ------------------------------------------------ Increments [anchor_to_add] (0,1,2)
+    movzx eax, byte [current_anchor]
+    cmp eax, 3
+    jne .finish_add
+    
+    .add_next_anchor:
+        movzx eax, byte [anchor_to_add] 
+        cmp eax, 3   ; All have been created  
+        jge .finish_add
+
+        mov edi, 0   ; Left Button
+        call IsMouseButtonPressed          
+        test al, al
+        jz .finish_add
+
+        ; Compute offset for anchor to add
+        movzx rax, byte [anchor_to_add]
+        imul rax, 16
+
+        ; Copy x,y
+        movq xmm0, [mouse_position_on_center]
+        movq [anchors + rax], xmm0
+
+        ; Copy w,h
+        movss xmm1, [anchor_size]
+        movss [anchors + rax + 8], xmm1    
+        movss [anchors + rax + 12], xmm1
+
+        inc byte [anchor_to_add]
+    .finish_add:
+    ; ----------------------------------------------------------------
+
+    ; Delete --------------------------------------------------------- Decrements [anchor_to_add] & deletes [current_anchor]
     .delete_selected_anchor:
-        movzx eax, byte [current_anchor] ; TODO - Do we need this ? 
+        movzx eax, byte [current_anchor] ; TODO - Do we need this ? Maybe factor out
         cmp eax, 3
         jge .finish_delete
 
@@ -244,14 +308,53 @@ _start:
         test al, al
         jz .finish_delete
 
-        pxor xmm0, xmm0
-        mov rax, [current_anchor_byte_offset]
-        movdqa  [anchors + rax], xmm0 
+        ; Determine which anchor to delete and shift accordingly
+        movzx eax, byte [current_anchor]
+        
+        ; Since only 3 anchor why generalize ?!
+        cmp eax, 0
+        je .delete_anchor_0
+        cmp eax, 1
+        je .delete_anchor_1
+        cmp eax, 2
+        je .delete_anchor_2
+        jmp .finish_delete
 
-        dec byte [anchor_to_add]
+        .delete_anchor_0:
+            movdqa xmm0, [anchors + 16]
+            movdqa [anchors + 0], xmm0
+            
+            movdqa xmm0, [anchors + 32]
+            movdqa [anchors + 16], xmm0
+            
+            pxor xmm0, xmm0
+            movdqa [anchors + 32], xmm0
+            
+            jmp .finish_delete_shift
+
+        .delete_anchor_1:
+            movdqa xmm0, [anchors + 32]
+            movdqa [anchors + 16], xmm0
+            
+            pxor xmm0, xmm0
+            movdqa [anchors + 32], xmm0
+            
+            jmp .finish_delete_shift
+
+        .delete_anchor_2:
+            pxor xmm0, xmm0
+            movdqa [anchors + 32], xmm0
+            
+            jmp .finish_delete_shift
+
+        .finish_delete_shift:
+            movzx eax, byte [anchor_to_add]
+            cmp eax, 0
+            je .finish_delete
+            dec byte [anchor_to_add]
+            mov byte [current_anchor], 3
     .finish_delete:
-
-    ; --------------
+    ; ----------------------------------------------------------------
 
 .end_loop:
     ; Debug ----------------------------------------------------------
