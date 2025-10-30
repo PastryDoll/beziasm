@@ -28,7 +28,9 @@ section '.text' executable
     extrn IsKeyPressed
     extrn GetScreenWidth
     extrn GetScreenHeight
-    extrn DrawLineV
+    extrn DrawLineEx  ; (Vector2 startPos, Vector2 endPos, float thick, Color color)
+    extrn DrawCircleV ; (Vector2 center, float radius, Color color)
+    extrn GetTime     ; double GetTime(void)
     extrn _exit
 
 _start:
@@ -88,30 +90,57 @@ _start:
         call DrawRectangleV
     ; ----------------------------------------------------------------
 
-    ; Draw Lines -----------------------------------------------------
+    ; Draw Lines & Circles -------------------------------------------
     .draw_lines:
-        movzx eax, byte [anchor_to_add]
-        cmp eax, 2
-        jge .draw_first_line
-        jmp .draw_first_line_done
 
-        .draw_first_line:
+            movzx eax, byte [anchor_to_add]
+            cmp eax, 2
+            jge .draw_first
+            jmp .draw_first_done
+
+        .draw_first:
             movq xmm0, [anchors]
             movq xmm1, [anchors + 16]
-            mov rdi, 0xFF00FF00  ; Color
-            call DrawLineV
+            ; Compute centering offset (half anchor size)
+            mov eax, dword [anchor_size]     
+            sub eax, 0x00800000              
+            movd xmm7, eax                   
+            shufps xmm7, xmm7, 0
+            
+            ; Center the points
+            addps xmm0, xmm7                
+            addps xmm1, xmm7 
+            call draw_line_with_circle
+            movq [circle1], xmm0
 
-        .draw_first_line_done:
+
+        .draw_first_done:
             movzx eax, byte [anchor_to_add]
             cmp eax, 3
             jl .dont_draw_lines              
 
-        .draw_second_line:
-            movq xmm0, [anchors+ 16]
+        .draw_second:
             movq xmm1, [anchors + 32]
-            mov rdi, 0xFF00FF00  ; Color
-            call DrawLineV
-    
+            movq xmm0, [anchors + 16]
+            ; Compute centering offset (half anchor size)
+            mov eax, dword [anchor_size]     
+            sub eax, 0x00800000              
+            movd xmm7, eax                   
+            shufps xmm7, xmm7, 0
+            
+            ; Center the points
+            addps xmm0, xmm7                
+            addps xmm1, xmm7 
+            call draw_line_with_circle
+            movq [circle2], xmm0
+
+            movq xmm0, [circle1]
+            movq xmm1, [circle2]
+            call draw_line_with_circle
+
+
+
+
     .dont_draw_lines:
     ;-----------------------------------------------------------------
 
@@ -376,6 +405,83 @@ _start:
     xor     edi, edi         
     call _exit
 
+
+; ===================================================================
+; Function: draw_line_with_circle
+; Draws a line between two anchors and animates a circle along it
+; Input:
+;   xmm0 - start point [x1, y1]
+;   xmm1 - end point [x2, y2]
+; ===================================================================
+draw_line_with_circle:
+    push rbp                        ; Align stack
+    mov rbp, rsp
+    sub rsp, 32                     ; Allocate space (stays 16-aligned)
+
+    movdqa [rsp], xmm0              ; Save args on stack
+    movdqa [rsp + 16], xmm1      
+
+    movss xmm2, [line_thickness] 
+    mov edi, [line_color]         
+    call DrawLineEx
+
+    ; Get time and compute oscillating 't' value (0 -> 1 -> 0 -> 1 ...)
+    call GetTime                     
+    cvtsd2ss xmm0, xmm0             ; Convert double to float
+
+    ; Take modulo 2.0 ( a mod b = a - b × floor(a/b) )
+    movss xmm4, xmm0                ; Save original t
+    mov eax, dword 2.0
+    movd xmm1, eax
+    divss xmm0, xmm1                ; xmm0 = t / 2.0
+    cvttss2si eax, xmm0             ; eax = floor(t / 2.0)
+    cvtsi2ss xmm1, eax
+    mov eax, dword 2.0
+    movd xmm2, eax
+    mulss xmm1, xmm2                ; xmm1 = floor * 2.0
+    movss xmm0, xmm4                ; Restore original t
+    subss xmm0, xmm1                ; xmm0 = t - t* floor(t / 2.0) =  t % 2.0 
+
+    ; Convert 0-2 range to 0-1-0 
+    mov eax, dword 1.0
+    movd xmm1, eax
+    movss xmm2, xmm0
+    subss xmm2, xmm1                ; xmm2 = (t % 2) - 1 (range -1 to 1)
+    movaps xmm3, xmm2
+    mulss xmm3, xmm3                ; Square to make positive
+    sqrtss xmm3, xmm3               ; Take sqrt to get abs -1,1 to 1,0,1
+    mov eax, dword 1.0
+    movd xmm2, eax
+    subss xmm2, xmm3                ; xmm2 = 1 - abs((t % 2) - 1) (0,1,0)
+
+    movss [norm_time_loop], xmm2         ; Store computed time
+
+    movdqa xmm0, [rsp]
+    movdqa xmm1, [rsp + 16]
+
+    ; Compute point in line parametrized by t
+    movss xmm2, [norm_time_loop]
+    shufps xmm2, xmm2, 0            ; Broadcast 
+
+    movaps xmm3, xmm1               ; xmm3 = [x2, y2]
+    subps xmm3, xmm0                ; xmm3 = [x2-x1, y2-y1]
+    mulps xmm3, xmm2                ; xmm3 = [(x2-x1)*t, (y2-y1)*t]
+    addps xmm3, xmm0                ; xmm3 = [(x2-x1)*t + x1, (y2-y1)*t + y1]
+
+    movq xmm0, xmm3
+    movss xmm1, [circle_radius] 
+    mov edi, dword [circle_color]
+    sub rsp, 16
+    movdqa [rsp], xmm3
+    call DrawCircleV
+    movdqa xmm3, [rsp]
+    add rsp, 16
+
+    movq xmm0, xmm3 ; return pos on xmm0
+    
+    leave                           ; Restore rbp and rsp
+    ret
+
 section '.data' writeable align 16
 
 anchor_size:
@@ -383,6 +489,21 @@ anchor_size:
 
 current_anchor_byte_offset:
     dq 0
+
+line_thickness:
+    dd 3.0
+
+circle_radius:
+    dd 8.0
+
+circle_color:
+    dd 0xFFFFFF00
+
+line_color:
+    dd 0xFF00FF00
+
+norm_time_loop:
+    dd 0.0
 
 mouse_position:
     dd 0.0
@@ -420,6 +541,14 @@ anchors:
     dd 0.0      ; w
     dd 0.0      ; h
 
+circle1:
+    dd 0.0
+    dd 0.0
+
+circle2:
+    dd 0.0 
+    dd 0.0 
+
 current_anchor: db 0
 anchor_to_add: db 0
 
@@ -431,7 +560,9 @@ debugmsg: db "Anchor stored: x=%d y=%d w=%d h=%d", 0xA, 0
 collchkmsg: db "Checking: mouse(%d,%d) vs rect(%d,%d,%d,%d)", 0xA, 0
 mouse_pos_msg: db "Mouse: x=%d y=%d", 0xA, 0
 mouse_offset_msg: db "Mouse Offseted: x=%d y=%d", 0xA, 0
+a_debug_msg: db "a value: %f", 0xA, 0
+circle1_msg: db "Circle1: x=%d y=%d", 0xA, 0
+circle2_msg: db "Circle2: x=%d y=%d", 0xA, 0
 
-
-
+debug_circle_msg: db "DEBUG: Storing circle x=%d y=%d", 0xA, 0
 section '.note.GNU-stack'
