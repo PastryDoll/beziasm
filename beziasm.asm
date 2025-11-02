@@ -7,6 +7,7 @@
 ;   r9  - 6th argument
 
 format ELF64
+SAMPLE_BUFFER_SIZE equ 100
 
 section '.text' executable
     public _start
@@ -31,18 +32,19 @@ section '.text' executable
     extrn DrawLineEx  ; (Vector2 startPos, Vector2 endPos, float thick, Color color)
     extrn DrawCircleV ; (Vector2 center, float radius, Color color)
     extrn GetTime     ; double GetTime(void)
+    extrn DrawFPS     ; (int posX, int posY, int fontSize, Color color)
+    extrn DisableFlag    
     extrn _exit
 
 _start:
 
     ; Set Window -----------------------------------------------------
-    mov rdi, 800
-    mov rsi, 600
+    mov rdi, 1280
+    mov rsi, 960
     mov rdx, title
     call InitWindow
-    mov rdi, 360          
-    call SetTargetFPS 
-
+    mov rdi, 144          
+    call SetTargetFPS
 
 .main_loop:
 
@@ -50,10 +52,46 @@ _start:
     call WindowShouldClose
     test al, al
     jnz .exit
+    call GetTime                     
+    cvtsd2ss xmm0, xmm0             ; Convert double to float
+    movss [time], xmm0   
+
+    .compute_nom_time: 
+        ; Get time and compute oscillating 't' value (0 -> 1 -> 0 -> 1 ...)
+        movss xmm0, [time]
+
+        ; Take modulo 2.0 ( a mod b = a - b × floor(a/b) )
+        movss xmm4, xmm0                ; Save original t
+        mov eax, dword 2.0
+        movd xmm1, eax
+        divss xmm0, xmm1                ; xmm0 = t / 2.0
+        cvttss2si eax, xmm0             ; eax = floor(t / 2.0)
+        cvtsi2ss xmm1, eax
+        mov eax, dword 2.0
+        movd xmm2, eax
+        mulss xmm1, xmm2                ; xmm1 = floor * 2.0
+        movss xmm0, xmm4                ; Restore original t
+        subss xmm0, xmm1                ; xmm0 = t - t* floor(t / 2.0) =  t % 2.0 
+
+        ; Convert 0-2 range to 0-1-0 
+        mov eax, dword 1.0
+        movd xmm1, eax
+        movss xmm2, xmm0
+        subss xmm2, xmm1                ; xmm2 = (t % 2) - 1 (range -1 to 1)
+        movaps xmm3, xmm2
+        mulss xmm3, xmm3                ; Square to make positive
+        sqrtss xmm3, xmm3               ; Take sqrt to get abs -1,1 to 1,0,1
+        mov eax, dword 1.0
+        movd xmm2, eax
+        subss xmm2, xmm3                ; xmm2 = 1 - abs((t % 2) - 1) (0,1,0)
+
+        movss [norm_time_loop], xmm2         ; Store computed time
+
     call BeginDrawing
     
     mov rdi, 0xFF181818
     call ClearBackground
+
     ;-----------------------------------------------------------------
 
     ; Vars resets -----------------------------------------------------
@@ -90,7 +128,7 @@ _start:
         call DrawRectangleV
     ; ----------------------------------------------------------------
 
-    ; Draw Lines & Circles -------------------------------------------
+    ; Draw Lines & Circles & Bezier ---------------------------------- Draws all the cool stuff
     .draw_lines:
 
             movzx eax, byte [anchor_to_add]
@@ -119,7 +157,7 @@ _start:
             cmp eax, 3
             jl .dont_draw_lines              
 
-        .draw_second:
+        .draw_second_and_bezier:
             movq xmm1, [anchors + 32]
             movq xmm0, [anchors + 16]
             ; Compute centering offset (half anchor size)
@@ -138,9 +176,22 @@ _start:
             movq xmm1, [circle2]
             call draw_line_with_circle
 
+            ; Calculate which sample index this t corresponds to
+            movss xmm1, [norm_time_loop]        ; Load t (0.0 to 1.0)
+            mov eax, SAMPLE_BUFFER_SIZE         
+            cvtsi2ss xmm2, eax                  
+            mulss xmm1, xmm2                     ; xmm1 = t * SAMPLE_BUFFER_SIZE
 
+            ; Clamp to max index 
+            cvttss2si edi, xmm1                  ; edi = floor(xmm1)
+            cmp edi, SAMPLE_BUFFER_SIZE - 1
+            jle .index_ok
+            mov edi, SAMPLE_BUFFER_SIZE - 1      
+            .index_ok:
 
+            call add_bezier_sample_at_index
 
+            call draw_bezier_curve
     .dont_draw_lines:
     ;-----------------------------------------------------------------
 
@@ -387,16 +438,21 @@ _start:
 
 .end_loop:
     ; Debug ----------------------------------------------------------
-    mov rdi, toadddmsg          
-    movzx rsi, byte [anchor_to_add] 
-    xor rax, rax                    
-    call printf
+    ;mov rdi, toadddmsg          
+    ;movzx rsi, byte [anchor_to_add] 
+    ;xor rax, rax                    
+    ;call printf
 
-    mov rdi, currmsg          
-    movzx rsi, byte [current_anchor] 
-    xor rax, rax                    
-    call printf
+    ;mov rdi, currmsg          
+    ;movzx rsi, byte [current_anchor] 
+    ;xor rax, rax                    
+    ;call printf
     ; -----------------------------------------------------------------
+    mov rdi, 10                     
+    mov rsi, 10                     
+    mov rdx, 20                    
+    mov rcx, 0xFFFFFFFF             
+    call DrawFPS
     call EndDrawing
     jmp .main_loop
 
@@ -425,37 +481,6 @@ draw_line_with_circle:
     mov edi, [line_color]         
     call DrawLineEx
 
-    ; Get time and compute oscillating 't' value (0 -> 1 -> 0 -> 1 ...)
-    call GetTime                     
-    cvtsd2ss xmm0, xmm0             ; Convert double to float
-
-    ; Take modulo 2.0 ( a mod b = a - b × floor(a/b) )
-    movss xmm4, xmm0                ; Save original t
-    mov eax, dword 2.0
-    movd xmm1, eax
-    divss xmm0, xmm1                ; xmm0 = t / 2.0
-    cvttss2si eax, xmm0             ; eax = floor(t / 2.0)
-    cvtsi2ss xmm1, eax
-    mov eax, dword 2.0
-    movd xmm2, eax
-    mulss xmm1, xmm2                ; xmm1 = floor * 2.0
-    movss xmm0, xmm4                ; Restore original t
-    subss xmm0, xmm1                ; xmm0 = t - t* floor(t / 2.0) =  t % 2.0 
-
-    ; Convert 0-2 range to 0-1-0 
-    mov eax, dword 1.0
-    movd xmm1, eax
-    movss xmm2, xmm0
-    subss xmm2, xmm1                ; xmm2 = (t % 2) - 1 (range -1 to 1)
-    movaps xmm3, xmm2
-    mulss xmm3, xmm3                ; Square to make positive
-    sqrtss xmm3, xmm3               ; Take sqrt to get abs -1,1 to 1,0,1
-    mov eax, dword 1.0
-    movd xmm2, eax
-    subss xmm2, xmm3                ; xmm2 = 1 - abs((t % 2) - 1) (0,1,0)
-
-    movss [norm_time_loop], xmm2         ; Store computed time
-
     movdqa xmm0, [rsp]
     movdqa xmm1, [rsp + 16]
 
@@ -479,8 +504,89 @@ draw_line_with_circle:
 
     movq xmm0, xmm3 ; return pos on xmm0
     
-    leave                           ; Restore rbp and rsp
+    leave                           
     ret
+
+
+; ===================================================================
+; Function: add_bezier_sample_at_index
+; Adds a point to a specific index in the buffer
+; Input:
+;   xmm0 - point [x, y] to add
+;   edi  - index to store at (0 to SAMPLE_BUFFER_SIZE-1)
+; ===================================================================
+add_bezier_sample_at_index:
+    push rbp
+    mov rbp, rsp
+    
+    mov eax, edi
+    shl eax, 3                      ; eax = index * 8 (byte offset)
+    
+    movq [bezier_samples + rax], xmm0
+    
+    ; Increment sample_count if not at max yet
+    mov eax, [sample_count]
+    cmp eax, SAMPLE_BUFFER_SIZE
+    jge .done                       ; Already at max
+    inc eax
+    mov [sample_count], eax
+    
+    .done:
+        leave
+        ret
+
+; ===================================================================
+; Function: draw_bezier_curve
+; Draws lines connecting sampled points (for i=0; i<sample_count; i++)
+; ===================================================================
+draw_bezier_curve:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    
+    ; Check if we have enough points
+    mov ebx, [sample_count]
+    cmp ebx, 2
+    jl .done                        ; Need at least 2 points to draw lines
+    
+    ; for (i = 0; i < sample_count - 1; i++)
+    xor r12d, r12d                  ; i = 0
+    
+    .for_loop:
+        ; Check: i < sample_count - 1
+        mov eax, ebx
+        dec eax                     
+        cmp r12d, eax
+        jge .done                    
+        
+        ; bezier_samples[i]
+        mov eax, r12d
+        shl eax, 3                   ; i * 8 
+        movq xmm0, [bezier_samples + rax]
+        
+        ; bezier_samples[i+1]
+        mov eax, r12d
+        inc eax                      
+        shl eax, 3                  
+        movq xmm1, [bezier_samples + rax]
+        
+        ; Draw line
+        movss xmm2, [line_thickness]
+        mov edi, [sample_line_color]
+        call DrawLineEx
+        
+        ; i++
+        inc r12d
+        jmp .for_loop
+        
+    .done:
+        pop r13
+        pop r12
+        pop rbx
+        leave
+        ret
 
 section '.data' writeable align 16
 
@@ -523,6 +629,9 @@ drag_start_anchor:
 
 is_dragging: db 0
 
+time:
+    dd 0.0
+
 align 16  
 anchors:
     ; Anchor 0
@@ -540,6 +649,18 @@ anchors:
     dd 0.0      ; y
     dd 0.0      ; w
     dd 0.0      ; h
+
+align 16
+bezier_samples:
+    times SAMPLE_BUFFER_SIZE * 2 dd 0.0  
+
+sample_write_index: dd 0      
+sample_count: dd 0            
+
+sample_point_radius: dd 3.0
+sample_point_color: dd 0xFFFF00FF 
+sample_line_color: dd 0xFFFF00FF   
+
 
 circle1:
     dd 0.0
@@ -563,6 +684,8 @@ mouse_offset_msg: db "Mouse Offseted: x=%d y=%d", 0xA, 0
 a_debug_msg: db "a value: %f", 0xA, 0
 circle1_msg: db "Circle1: x=%d y=%d", 0xA, 0
 circle2_msg: db "Circle2: x=%d y=%d", 0xA, 0
+debug_t_msg: db "t value: %f", 0xA, 0
+debug_index_msg: db "Adding sample at index: %d", 0xA, 0
 
 debug_circle_msg: db "DEBUG: Storing circle x=%d y=%d", 0xA, 0
 section '.note.GNU-stack'
