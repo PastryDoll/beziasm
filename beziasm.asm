@@ -33,7 +33,8 @@ section '.text' executable
     extrn DrawCircleV ; (Vector2 center, float radius, Color color)
     extrn GetTime     ; double GetTime(void)
     extrn DrawFPS     ; (int posX, int posY, int fontSize, Color color)
-    extrn DisableFlag    
+    extrn DisableFlag  
+    extrn DrawText  ; (const char *text, int posX, int posY, int fontSize, Color color)  
     extrn _exit
 
 _start:
@@ -91,6 +92,28 @@ _start:
     
     mov rdi, 0xFF181818
     call ClearBackground
+
+    ; Draw tutorial text ----------------------------------------
+    mov rdi, tutorial_line1
+    mov rsi, 20                      
+    mov rdx, 890                     
+    mov rcx, 20                      
+    mov r8, 0xFFAAAAAA              
+    call DrawText
+
+    mov rdi, tutorial_line2
+    mov rsi, 20
+    mov rdx, 910
+    mov rcx, 20
+    mov r8, 0xFFAAAAAA
+    call DrawText
+
+    mov rdi, tutorial_line3
+    mov rsi, 20
+    mov rdx, 930
+    mov rcx, 20
+    mov r8, 0xFFAAAAAA
+    call DrawText
 
     ;-----------------------------------------------------------------
 
@@ -192,6 +215,8 @@ _start:
             call add_bezier_sample_at_index
 
             call draw_bezier_curve
+
+
     .dont_draw_lines:
     ;-----------------------------------------------------------------
 
@@ -437,17 +462,6 @@ _start:
     ; ----------------------------------------------------------------
 
 .end_loop:
-    ; Debug ----------------------------------------------------------
-    ;mov rdi, toadddmsg          
-    ;movzx rsi, byte [anchor_to_add] 
-    ;xor rax, rax                    
-    ;call printf
-
-    ;mov rdi, currmsg          
-    ;movzx rsi, byte [current_anchor] 
-    ;xor rax, rax                    
-    ;call printf
-    ; -----------------------------------------------------------------
     mov rdi, 10                     
     mov rsi, 10                     
     mov rdx, 20                    
@@ -548,8 +562,8 @@ draw_bezier_curve:
     
     ; Check if we have enough points
     mov ebx, [sample_count]
-    cmp ebx, 2
-    jl .done                        ; Need at least 2 points to draw lines
+    ;cmp ebx, 2
+    ;jl .done                        ; Need at least 2 points to draw lines
     
     ; for (i = 0; i < sample_count - 1; i++)
     xor r12d, r12d                  ; i = 0
@@ -571,11 +585,21 @@ draw_bezier_curve:
         inc eax                      
         shl eax, 3                  
         movq xmm1, [bezier_samples + rax]
+
+        ; Check if xmm0 is (0.0, 0.0)
+        pxor xmm7, xmm7              
+        comisd xmm0, xmm7            ; Compare as double 
+        je .skip_draw                
+        
+        comisd xmm1, xmm7
+        je .skip_draw
         
         ; Draw line
         movss xmm2, [line_thickness]
         mov edi, [sample_line_color]
         call DrawLineEx
+        
+        .skip_draw:
         
         ; i++
         inc r12d
@@ -611,6 +635,9 @@ line_color:
 norm_time_loop:
     dd 0.0
 
+norm_time_loop_for_sample:
+    dd 0.0
+
 mouse_position:
     dd 0.0
     dd 0.0
@@ -630,6 +657,9 @@ drag_start_anchor:
 is_dragging: db 0
 
 time:
+    dd 0.0
+
+time_first_sample: 
     dd 0.0
 
 align 16  
@@ -674,18 +704,7 @@ current_anchor: db 0
 anchor_to_add: db 0
 
 title: db "Beziasm", 0
-mouseXmsg db "Current Mouse X %d.", 0xA,0    
-toadddmsg db "Anchor to add %i.", 0xA,0    
-currmsg db "Anchor selected %i.", 0xA,0    
-debugmsg: db "Anchor stored: x=%d y=%d w=%d h=%d", 0xA, 0
-collchkmsg: db "Checking: mouse(%d,%d) vs rect(%d,%d,%d,%d)", 0xA, 0
-mouse_pos_msg: db "Mouse: x=%d y=%d", 0xA, 0
-mouse_offset_msg: db "Mouse Offseted: x=%d y=%d", 0xA, 0
-a_debug_msg: db "a value: %f", 0xA, 0
-circle1_msg: db "Circle1: x=%d y=%d", 0xA, 0
-circle2_msg: db "Circle2: x=%d y=%d", 0xA, 0
-debug_t_msg: db "t value: %f", 0xA, 0
-debug_index_msg: db "Adding sample at index: %d", 0xA, 0
-
-debug_circle_msg: db "DEBUG: Storing circle x=%d y=%d", 0xA, 0
+tutorial_line1: db "Click to place 3 anchor points", 0
+tutorial_line2: db "Drag anchors to move them", 0
+tutorial_line3: db "Select anchor and press BACKSPACE to delete", 0
 section '.note.GNU-stack'
